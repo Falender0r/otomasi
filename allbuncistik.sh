@@ -3,30 +3,24 @@
 # Variabel Konfigurasi
 VLAN_INTERFACE="eth1.10"
 VLAN_ID=10
-IP_ADDR="$IP_Router$IP_Pref"      # IP address untuk interface VLAN di Ubuntu
-DHCP_CONF="/etc/dhcp/dhcpd.conf" # Tempat Konfigurasi DHCP
+IP_Router="192.168.17.1"          # IP address untuk interface VLAN di Ubuntu
+IP_Pref="/24"                     # Subnet mask prefix
+IP_Subnet="192.168.17.0"          # Subnet address
+IP_BC="255.255.255.0"             # Netmask
+IP_Range="192.168.17.2 192.168.17.200"
+IP_DNS="8.8.8.8, 8.8.4.4"
+DHCP_CONF="/etc/dhcp/dhcpd.conf"  # Tempat Konfigurasi DHCP
 NETPLAN_CONF="/etc/netplan/01-netcfg.yaml" # Tempat Konfigurasi Netplan
 DDHCP_CONF="/etc/default/isc-dhcp-server" # Tempat konfigurasi default DHCP
-SWITCH_IP="192.168.1.2"          # IP Cisco IOL
-MIKROTIK_IP="192.168.1.3"        # IP MikroTik
-USER_SWITCH="root"               # Username SSH untuk Cisco Switch
-USER_MIKROTIK="admin"            # Username SSH default MikroTik
-PASSWORD_SWITCH="root"           # Password untuk Cisco Switch
-PASSWORD_MIKROTIK=""             # Kosongkan jika MikroTik tidak memiliki password
-IPROUTE_ADD="192.168.200.1/24"
+SWITCH_IP="192.168.1.2"           # IP Cisco IOL
+MIKROTIK_IP="192.168.1.3"         # IP MikroTik
+USER_SWITCH="root"                # Username SSH untuk Cisco Switch
+USER_MIKROTIK="admin"             # Username SSH default MikroTik
+PASSWORD_SWITCH="root"            # Password untuk Cisco Switch
+PASSWORD_MIKROTIK=""              # Kosongkan jika MikroTik tidak memiliki password
+IPROUTE_ADD="192.168.200.0/24"
 
-# Konfigurasi Untuk Seleksi Tiap IP
-IP_A="17"
-IP_B="200"
-IP_C="2"
-IP_BC="255.255.255.0"
-IP_Subnet="192.168.$IP_A.0"
-IP_Router="192.168.$IP_A.1"
-IP_Range="192.168.$IP_A.$IP_C 192.168.$IP_A.$IP_B"
-IP_DNS="8.8.8.8, 8.8.4.4"
-IP_Pref="/24"
-
-set -e
+set -e  # Menghentikan script jika ada error
 
 echo "Inisialisasi awal ..."
 
@@ -40,9 +34,7 @@ deb http://kartolo.sby.datautama.net.id/ubuntu/ focal-proposed main restricted u
 EOF
 
 sudo apt update
-sudo apt install sshpass -y
-sudo apt install isc-dhcp-server -y
-sudo apt install iptables-persistent -y
+sudo apt install -y sshpass isc-dhcp-server iptables-persistent
 
 # Konfigurasi Pada Netplan
 echo "Mengkonfigurasi netplan..."
@@ -56,10 +48,10 @@ network:
     eth1:
       dhcp4: no
   vlans:
-     eth1.10:
-       id: 10
-       link: eth1
-       addresses: [$IP_Router$IP_Pref]
+    $VLAN_INTERFACE:
+      id: $VLAN_ID
+      link: eth1
+      addresses: [$IP_Router$IP_Pref]
 EOF
 
 sudo netplan apply
@@ -86,11 +78,12 @@ echo "Mengaktifkan IP forwarding dan mengonfigurasi IPTables..."
 sudo sysctl -w net.ipv4.ip_forward=1
 echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
 sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+sudo iptables-save > /etc/iptables/rules.v4
 
 # Restart DHCP server
 echo "Restarting DHCP server..."
 sudo systemctl restart isc-dhcp-server
-sudo systemctl status isc-dhcp-server &
+sudo systemctl status isc-dhcp-server
 
 # Konfigurasi Cisco IOL
 echo "Mengonfigurasi Cisco IOL..."
@@ -118,20 +111,18 @@ if [ -z "$PASSWORD_MIKROTIK" ]; then
     ssh -o StrictHostKeyChecking=no $USER_MIKROTIK@$MIKROTIK_IP <<EOF
 /interface vlan add name=vlan10 vlan-id=$VLAN_ID interface=ether1
 /ip address add address=$IP_Router$IP_Pref interface=vlan10
-/ip address add address=$MIKROTIK_IP$IP_Pref interface=ether2
 /ip route add dst-address=$IPROUTE_ADD gateway=$IP_Router
 EOF
 else
     sshpass -p "$PASSWORD_MIKROTIK" ssh -o StrictHostKeyChecking=no $USER_MIKROTIK@$MIKROTIK_IP <<EOF
 /interface vlan add name=vlan10 vlan-id=$VLAN_ID interface=ether1
 /ip address add address=$IP_Router$IP_Pref interface=vlan10
-/ip address add address=$MIKROTIK_IP$IP_Pref interface=ether2
 /ip route add dst-address=$IPROUTE_ADD gateway=$IP_Router
 EOF
 fi
 
 # Konfigurasi Routing di Ubuntu Server
 echo "Menambahkan konfigurasi routing..."
-ip route add $IPROUTE_ADD via $MIKROTIK_IP
+sudo ip route add $IPROUTE_ADD via $MIKROTIK_IP
 
 echo "Otomasi konfigurasi selesai."
