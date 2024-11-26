@@ -4,14 +4,12 @@
 VLAN_INTERFACE="eth1.10"
 VLAN_ID=10
 PORT="22"
-IP_ADDR="$IP_Router$IP_Pref"      # IP address untuk interface VLAN di Ubuntu
-DHCP_CONF="/etc/dhcp/dhcpd.conf" #Tempat Konfigurasi DHCP
+DHCP_CONF="/etc/dhcp/dhcpd.conf"          # Tempat Konfigurasi DHCP
 NETPLAN_CONF="/etc/netplan/01-netcfg.yaml" # Tempat Konfigurasi Netplan
-DDHCP_CONF="/etc/default/isc-dhcp-server" #Tempat konfigurasi default DHCP
+DDHCP_CONF="/etc/default/isc-dhcp-server" # Tempat Konfigurasi Default DHCP
 IPROUTE_ADD="192.168.200.1/24"
 
-# Konfigurasi Untuk Seleksi Tiap IP
-#Konfigurasi IP Range dan IP Yang Anda Inginkan
+# Konfigurasi IP dan Subnet
 IP_A="17"
 IP_B="200"
 IP_C="2"
@@ -24,7 +22,18 @@ IP_Pref="/24"
 IP_FIX="192.168.17.10"
 IP_MAC="00:50:79:66:68:1e"
 
-set -e
+# Konfigurasi SSH Cisco
+USER_SWITCH="root"           # Ganti dengan username Anda
+PASSWORD_SWITCH="root"       # Ganti dengan password Anda
+SWITCH_IP="192.168.1.100"    # Ganti dengan IP Cisco Switch
+
+set -e # Berhenti jika ada error
+
+# Validasi Awal
+if [[ -z "$USER_SWITCH" || -z "$PASSWORD_SWITCH" || -z "$SWITCH_IP" ]]; then
+  echo "Error: Variabel SSH untuk Cisco Switch belum lengkap!"
+  exit 1
+fi
 
 echo "Inisialisasi awal ..."
 # Menambah Repositori Kartolo
@@ -37,11 +46,9 @@ deb http://kartolo.sby.datautama.net.id/ubuntu/ focal-proposed main restricted u
 EOF
 
 sudo apt update
-sudo apt install sshpass -y
-sudo apt install isc-dhcp-server -y
-sudo apt install iptables-persistent -y
+sudo apt install -y sshpass isc-dhcp-server iptables-persistent
 
-#Konfigurasi Pada Netplan
+# Konfigurasi Netplan
 echo "Mengkonfigurasi netplan..."
 cat <<EOF | sudo tee $NETPLAN_CONF
 network:
@@ -53,18 +60,19 @@ network:
     eth1:
       dhcp4: no
   vlans:
-     eth1.10:
-       id: 10
-       link: eth1
-       addresses: [$IP_Router$IP_Pref]
+    eth1.10:
+      id: $VLAN_ID
+      link: eth1
+      addresses:
+        - $IP_Router$IP_Pref
 EOF
 
 sudo netplan apply
 
-#  Konfigurasi DHCP Server
+# Konfigurasi DHCP Server
 echo "Menyiapkan konfigurasi DHCP server..."
 cat <<EOL | sudo tee $DHCP_CONF
-# Konfigurasi subnet untuk VLAN 10
+# Konfigurasi subnet untuk VLAN $VLAN_ID
 subnet $IP_Subnet netmask $IP_BC {
     range $IP_Range;
     option routers $IP_Router;
@@ -74,14 +82,14 @@ subnet $IP_Subnet netmask $IP_BC {
     max-lease-time 7200;
 }
 
-# Konfigurasi Fix DHCP
+# Konfigurasi Fixed DHCP
 host fantasia {
   hardware ethernet $IP_MAC;
   fixed-address $IP_FIX;
 }
 EOL
 
-#  Konfigurasi DDHCP Server
+# Konfigurasi Default DHCP Server
 echo "Menyiapkan konfigurasi DDHCP server..."
 cat <<EOL | sudo tee $DDHCP_CONF
 INTERFACESv4="$VLAN_INTERFACE"
@@ -89,24 +97,17 @@ EOL
 
 # Mengaktifkan IP forwarding dan mengonfigurasi IPTables
 echo "Mengaktifkan IP forwarding dan mengonfigurasi IPTables..."
-sudo sysctl -w net.ipv4.ip_forward=1
 echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -w net.ipv4.ip_forward=1
 sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+sudo iptables-save | sudo tee /etc/iptables/rules.v4
 
 # Restart DHCP server untuk menerapkan konfigurasi baru
 echo "Restarting DHCP server..."
 sudo systemctl restart isc-dhcp-server
+sudo systemctl status isc-dhcp-server --no-pager
 
-sleep 3
-
-sudo systemctl status isc-dhcp-server &
-
-# Akhir Confi DHCP SERVER
-
-#Konfigurasi Cisco
-echo "Mengkonfigurasi Cisco Mohon Tunggu"
-sudo ufw allow out to 192.168.1.1 port $PORT
-#  Konfigurasi Cisco Switch melalui SSH dengan username dan password root
+# Konfigurasi Cisco Switch melalui SSH
 echo "Mengonfigurasi Cisco Switch..."
 sshpass -p "$PASSWORD_SWITCH" ssh -o StrictHostKeyChecking=no -p "$PORT" $USER_SWITCH@$SWITCH_IP <<EOF
 enable
@@ -127,64 +128,4 @@ end
 write memory
 EOF
 
-
-# Konfigurasi Routing di Ubuntu Server
-# echo "Menambahkan konfigurasi routing..."
-# ip route add $IPROUTE_ADD via $MIKROTIK_IP
-
 echo "Otomasi konfigurasi selesai."
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#Depracated CODES
-
-
-# MIKROTIK_IP="192.168.200.0"     # IP MikroTik yang baru
-# USER_SWITCH="root"              # Username SSH untuk Cisco Switch
-# USER_MIKROTIK="admin"           # Username SSH default MikroTik
-# PASSWORD_SWITCH="root"          # Password untuk Cisco Switch
-# PASSWORD_MIKROTIK=""            # Kosongkan jika MikroTik tidak memiliki password
-
-#  Konfigurasi MikroTik melalui SSH tanpa prompt
-# echo "Mengonfigurasi MikroTik..."
-# if [ -z "$PASSWORD_MIKROTIK" ]; then
-#     ssh -o StrictHostKeyChecking=no $USER_MIKROTIK@$MIKROTIK_IP <<EOF
-# interface vlan add name=vlan10 vlan-id=$VLAN_ID interface=ether1
-# ip address add address=$IP_Router$IP_Pref interface=vlan10      # Sesuaikan dengan IP di VLAN Ubuntu
-# ip address add address=$MIKROTIK_IP$IP_Pref interface=ether2     # IP address MikroTik di network lain
-# ip route add dst-address=$IP_Router$IP_Pref gateway=$IP_Router
-# EOF
-# else
-#     sshpass -p "$PASSWORD_MIKROTIK" ssh -o StrictHostKeyChecking=no $USER_MIKROTIK@$MIKROTIK_IP <<EOF
-# interface vlan add name=vlan10 vlan-id=$VLAN_ID interface=ether1
-# ip address add address=$IP_Router$IP_Pref interface=vlan10      # Sesuaikan dengan IP di VLAN Ubuntu
-# ip address add address=$MIKROTIK_IP$IP_Pref interface=ether2     # IP address MikroTik di network lain
-# ip route add dst-address=$IP_Router$IP_Pref gateway=$IP_Router
-# EOF
-# fi
