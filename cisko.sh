@@ -1,38 +1,50 @@
+
 #!/bin/bash
 
-# Konfigurasi Cisco
-# Pastikan IP dan kredensial yang benar untuk switch Cisco
-SWITCH_IP="192.168.17.1"   # IP Switch Cisco (sesuaikan dengan IP switch yang digunakan)
-USER_SWITCH="admin"        # Username SSH untuk Switch Cisco
-PASSWORD_SWITCH="admin123" # Password SSH untuk Switch Cisco
-PORT="22"                  # Port SSH yang digunakan (biasanya 22)
+# Warna untuk output
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m'
 
-# VLAN ID dan Nama
-VLAN_ID=10
-VLAN_NAME="VLAN10"
+# Fungsi untuk pesan sukses dan gagal
+success_message() { echo -e "${GREEN}$1 berhasil!${NC}"; }
+error_message() { echo -e "${RED}$1 gagal!${NC}"; exit 1; }
 
-# Mengonfigurasi Cisco Switch melalui SSH dengan username dan password yang sudah ditentukan
-echo "Mengonfigurasi Switch Cisco pada IP $SWITCH_IP..."
+# IP dan Port Cisco Device
+CISCO_IP="192.168.157.128"
+CISCO_PORT="30021"
 
-# Menyambung ke switch Cisco melalui SSH dan menjalankan perintah untuk mengonfigurasi VLAN
-sshpass -p "$PASSWORD_SWITCH" ssh -o StrictHostKeyChecking=no -p "$PORT" $USER_SWITCH@$SWITCH_IP <<EOF
-enable
-configure terminal
-vlan $VLAN_ID
-name $VLAN_NAME
-exit
-interface range ethernet 0/1 - 0/24
-switchport mode access
-switchport access vlan $VLAN_ID
-no shutdown
-exit
-interface ethernet 0/0
-switchport trunk encapsulation dot1q
-switchport mode trunk
-no shutdown
-exit
-write memory
+# Pastikan `expect` terinstal
+command -v expect > /dev/null || error_message "Expect tidak terpasang. Instal dengan: sudo apt install expect"
+
+# Telnet dan konfigurasi perangkat Cisco
+expect <<EOF
+spawn telnet $CISCO_IP $CISCO_PORT
+set timeout 20
+
+# Masuk ke perangkat dan mode konfigurasi
+expect ">" { send "enable\r" }
+expect "#" { send "configure terminal\r" }
+
+# Konfigurasi interface e0/1: mode access dan VLAN 10
+expect "(config)#" { send "interface e0/1\r" }
+expect "(config-if)#" { send "switchport mode access\r" }
+expect "(config-if)#" { send "switchport access vlan 10\r" }
+expect "(config-if)#" { send "no shutdown\r" }
+expect "(config-if)#" { send "exit\r" }
+
+# Konfigurasi interface e0/0: mode trunk
+expect "(config)#" { send "interface e0/0\r" }
+expect "(config-if)#" { send "switchport mode trunk\r" }
+expect "(config-if)#" { send "switchport trunk encapsulation dot1q\r" }
+expect "(config-if)#" { send "no shutdown\r" }
+expect "(config-if)#" { send "exit\r" }
+
+# Keluar dari mode konfigurasi
+expect "(config)#" { send "exit\r" }
+expect "#" { send "exit\r" }
+expect eof
 EOF
 
-# Memberikan output yang menunjukkan konfigurasi berhasil
-echo "Konfigurasi Switch Cisco selesai. VLAN $VLAN_ID ($VLAN_NAME) telah diterapkan."
+# Cek status dan tampilkan pesan
+[ $? -eq 0 ] && success_message "Konfigurasi Cisco" || error_message "Proses konfigurasi Cisco"
